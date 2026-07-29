@@ -1,0 +1,41 @@
+name: Sync country.mmdb
+
+on:
+  schedule:
+    - cron: '0 20 * * 1'      # 每周一 04:00(北京时间)
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download upstream mmdb
+        run: |
+          curl -fsSL --retry 3 -o /tmp/country.mmdb \
+            https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb
+          # 完整性校验:必须是有效 MaxMind 库且 >5MB,否则中止
+          size=$(stat -c%s /tmp/country.mmdb)
+          [ "$size" -gt 5000000 ] || { echo "文件过小 ($size),中止"; exit 1; }
+          tail -c 100000 /tmp/country.mmdb | grep -q "MaxMind.com" || { echo "非有效 mmdb,中止"; exit 1; }
+          echo "下载 OK: $size 字节"
+
+      - name: Commit if changed
+        run: |
+          if cmp -s /tmp/country.mmdb country.mmdb; then
+            echo "无变化,跳过"; exit 0
+          fi
+          cp /tmp/country.mmdb country.mmdb
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add country.mmdb
+          git commit -m "chore: sync country.mmdb from upstream"
+          git push
+
+      - name: Purge jsDelivr cache
+        if: success()
+        run: |
+          curl -s "https://purge.jsdelivr.net/gh/echoowall/config@main/country.mmdb" || true
